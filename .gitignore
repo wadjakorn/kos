@@ -7,6 +7,10 @@ __pycache__/
 config/extractor.json
 .cache/
 
+# Machine-local data-root pointer (path differs per machine). Commit the
+# .example variant only. See config/paths.example.json.
+config/paths.json
+
 # Ingest run logs are local artifacts; keep the dir, not the runs.
 logs/*.log
 

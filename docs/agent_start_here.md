@@ -39,6 +39,16 @@ retrieve via indexes — you do not scan the repo.
 
 Stop at the earliest step that answers the question.
 
+## Where the db lives (data root)
+
+The paths above (`indexes/`, `atoms/`, `sources/`, …) are **relative to the
+configured data root**, not necessarily this code repo. The engine resolves the
+root in order: `KOS_DATA_ROOT` env var → `config/paths.json` → repo root
+(default). The root is the single entry point — it doubles as the Obsidian vault
+(links `[[ID]]` resolve to `{ID}.md` files under it). To find the active root:
+`python3 -c "import sys; sys.path.insert(0,'scripts'); import ingest; print(ingest.ROOT)"`.
+Templates, scripts, and `config/extractor.json` always stay in the code repo.
+
 ## Entity conventions
 
 | Kind | ID | Authored by | Lives in |

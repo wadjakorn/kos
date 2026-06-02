@@ -396,6 +396,7 @@ def write_source(meta: dict, body: str, extra_tags: list[str],
 # Main.
 # ---------------------------------------------------------------------------
 def main(argv=None) -> int:
+    ingest.init_paths()  # resolve data root (env > config/paths.json > repo)
     ap = argparse.ArgumentParser(description="KOS source intake")
     sub = ap.add_subparsers(dest="cmd", required=True)
     add = sub.add_parser("add", help="add a source and ingest it")

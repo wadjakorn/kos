@@ -23,10 +23,52 @@ scripts/kos.py             # source intake — `kos add <url|file>`
 scripts/serve.py           # web UI server (stdlib http.server)
 scripts/webapi.py          # web UI logic layer (reuses ingest.py + kos.py)
 web/                       # vanilla HTML/JS/CSS front end
-config/                    # extractor.example.json (copy to extractor.json to enable LLM)
+config/                    # extractor + paths config (copy *.example.json to enable)
 logs/                      # ingest run logs
 examples/                  # pointers to the worked example
 ```
+
+The **data directories** (`sources/ atoms/ theses/ projects/ indexes/ logs/`)
+are *the db* — by default they sit in this repo, but they can live in their own
+directory outside it (see **Data root** below).
+
+## Data root — where the db lives
+
+Code (this repo) and knowledge (the db) can version independently. The engine
+resolves a single **data root**, in order:
+
+1. `KOS_DATA_ROOT` environment variable
+2. `config/paths.json` → `{"data_root": "..."}` (machine-local, gitignored)
+3. the repo root itself (backward-compatible default — no setup needed)
+
+That data root is the **single entry point** for everything else: it is the KOS
+data dir, it can be its own git repo, and it is the **Obsidian vault root**.
+Because atom files are named `{ID}.md` and links use `[[ID]]`, Obsidian resolves
+cross-links by basename as long as every entity folder sits under one root —
+which this guarantees.
+
+**One-time setup — externalize the db:**
+
+```bash
+# 1. pick a root and move any existing local data into it
+mkdir -p ~/knowledge-base-data
+mv sources atoms theses projects indexes logs ~/knowledge-base-data/ 2>/dev/null || true
+
+# 2. point the engine at it (either mechanism works)
+cp config/paths.example.json config/paths.json   # then edit data_root, OR:
+export KOS_DATA_ROOT=~/knowledge-base-data
+
+# 3. give the data its own git history
+cd ~/knowledge-base-data && git init && \
+  printf '.cache/\nlogs/*.log\n' > .gitignore && \
+  git add . && git commit -m "init knowledge data"
+
+# 4. open ~/knowledge-base-data in Obsidian as a vault (optional)
+```
+
+With a data root configured, the in-repo `sources/ atoms/ …` skeleton is unused
+(it only serves the default no-config mode). `config/extractor.json` stays in
+the code repo — it is engine config, not knowledge.
 
 ## The five invariants
 
@@ -106,9 +148,9 @@ ln -s "$(pwd)/scripts/kos.py" ~/.local/bin/kos     # symlink onto PATH
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-`kos.py` resolves its real path through the symlink, so `sources/` always land in
-this repo no matter where you invoke `kos`. (Alternative: `alias kos="python3
-/abs/path/to/scripts/kos.py"`.)
+`kos.py` resolves its real path through the symlink and writes to the configured
+**data root** (see above) no matter where you invoke `kos`. (Alternative: `alias
+kos="python3 /abs/path/to/scripts/kos.py"`.)
 
 ## Web UI
 
@@ -221,7 +263,8 @@ friendly.
 
 Frontmatter is machine-parseable and IDs are stable so these can bolt on without
 migration: vector DB, local embeddings, MCP knowledge server, multi-agent
-workflows, Obsidian vault sync, knowledge-graph generation. Two seams are already
+workflows, knowledge-graph generation. The **Obsidian vault** seam is now live —
+the data root *is* the vault (see **Data root**). Two seams are already
 populated: the `Extractor` interface (`scripts/ingest.py`) ships `Marker` + `LLM`
 extractors, and the `Loader` interface (`scripts/kos.py`) ships six intake
 formats — PDF and others slot in as new subclasses.

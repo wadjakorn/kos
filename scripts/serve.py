@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+import ingest
 import webapi
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -255,6 +256,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None) -> int:
+    ingest.init_paths()  # resolve data root (env > config/paths.json > repo)
     ap = argparse.ArgumentParser(description="KOS web server")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--host", default="127.0.0.1")
