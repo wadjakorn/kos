@@ -170,7 +170,10 @@ async function viewDashboard() {
     .map(([t, n]) => `<span class="type-badge ${(TYPE_META[t]||TYPE_META.fact).cls}">${(TYPE_META[t]||TYPE_META.fact).icon} ${esc(t)} ${n}</span>`)
     .join(" ");
   render(`
-    <div class="page-head"><h1>Dashboard</h1><span class="sub">at-a-glance state of the knowledge base</span></div>
+    <div class="page-head"><h1>Dashboard</h1><span class="sub">at-a-glance state of the knowledge base</span>
+      <button class="btn btn-sm" id="rebuildBtn" style="margin-left:auto" title="Re-run ingest: mint atoms from any new/changed sources (cached, idempotent) and regenerate all indexes">↻ Rebuild indexes</button>
+    </div>
+    <div id="rebuildMsg"></div>
     <div class="grid grid-stats" style="margin:18px 0">
       <a class="card stat" href="#/browse"><div class="n">${c.atoms}</div><div class="l">Atoms</div></a>
       <a class="card stat" href="#/browse?lens=source"><div class="n">${c.sources}</div><div class="l">Sources</div></a>
@@ -183,6 +186,22 @@ async function viewDashboard() {
       <div><h2>Recent atoms</h2><div class="list">${(s.recent_atoms||[]).map(atomCard).join("") || '<p class="muted">none yet</p>'}</div></div>
       <div><h2>Recent sources</h2><div class="list">${(s.recent_sources||[]).map(sourceRow).join("") || '<p class="muted">none yet</p>'}</div></div>
     </div>`);
+
+  const btn = document.getElementById("rebuildBtn");
+  const msg = document.getElementById("rebuildMsg");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    msg.innerHTML = `<div class="banner banner-info"><span class="spinner"></span> Rebuilding — extracting from new/changed sources and regenerating indexes…</div>`;
+    try {
+      const r = await apiSend("/api/ingest", "POST", {});
+      if (r.error) { msg.innerHTML = `<div class="banner banner-error">${esc(r.error)}</div>`; btn.disabled = false; return; }
+      msg.innerHTML = `<div class="banner banner-ok">Indexes rebuilt.</div>`;
+      viewDashboard();  // refresh counts
+    } catch (e) {
+      msg.innerHTML = `<div class="banner banner-error">${esc(e.message)}</div>`;
+      btn.disabled = false;
+    }
+  });
 }
 
 function sourceRow(s) {
