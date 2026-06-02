@@ -142,15 +142,61 @@ The logic lives in `scripts/webapi.py` (pure functions reusing `ingest.py`/`kos.
 `scripts/serve.py` is the HTTP glue. Smoke-test it with
 `python3 scripts/web_smoke_test.py`.
 
-## LLM extraction (optional)
+## Updating & deleting knowledge
 
-By default the marker extractor parses human-authored `::atom` blocks
-(deterministic, zero deps). To have a model mint atoms from raw prose instead,
-copy `config/extractor.example.json` to `config/extractor.json` and set
-`"extractor": "llm"`. Two backends ship:
+Re-ingest **reconciles** atoms against their sources — it is no longer
+append-only:
+
+- **Edit an atom's metadata** (tags, type, confidence, source_location) in its
+  `::atom` block, re-run ingest → the atom file is updated in place. Its `id`,
+  `created` date, `hash`, and links are preserved.
+- **Edit an atom's title or body** → content hash changes, so a new atom is
+  minted and the stale one is **pruned** (net update).
+- **Remove an `::atom` block** → its atom is pruned and every back-reference
+  (source `atoms`, thesis `supporting_atoms`/`contradicting_atoms`, project
+  `linked_atoms`) is scrubbed.
 
 ```bash
-# one-off, no config file:
+python3 scripts/ingest.py              # reconcile + prune orphans (default)
+python3 scripts/ingest.py --no-prune   # keep orphans (old append-only behavior)
+python3 scripts/ingest.py --dry-run    # report would-prune, write nothing
+```
+
+**Prune is guarded against accidental wipes.** It skips entirely on an empty
+scan, and prunes an orphan only if its source produced **≥1 live atom** this
+run. A source that drops to zero atoms — most often because it was ingested with
+a *different extractor* than minted its atoms (e.g. plain marker mode over
+sources whose atoms came from `--extractor llm`) — has its atoms **retained**
+with a warning, not deleted. Remove those deliberately via the web UI or by
+re-running with the extractor that created them.
+
+**Web UI:** a source's detail page has **Delete source** (removes the source,
+the atoms it produced, and all references) and an atom's page has **Delete
+atom** — both confirm first and durably strip the originating `::atom` block so
+re-ingest can't resurrect them.
+
+## LLM extraction
+
+> **Default ingest (current):** this repo ships a local, gitignored
+> `config/extractor.json` set to **`llm` via the `claude -p` CLI**. Every
+> `ingest.py` run and every web-UI add mints atoms from raw prose by piping the
+> extraction prompt to `claude -p` on stdin — no `::atom` markers required.
+> Output is cached by source hash, so re-runs stay idempotent. Revert to
+> deterministic marker-only parsing by setting `"extractor": "marker"` (or
+> deleting `config/extractor.json`).
+
+The marker extractor parses human-authored `::atom` blocks (deterministic, zero
+deps). The LLM extractor asks a model to emit those same `::atom` blocks, so one
+parser serves humans and models alike. Configure it in `config/extractor.json`
+(copy `config/extractor.example.json` to start) with `"extractor": "llm"`. Three
+backends ship:
+
+```bash
+# configured default — Claude CLI, prompt on stdin:
+#   config/extractor.json → {"extractor":"llm","backend":"cli","cli":{"cmd":["claude","-p"]}}
+
+# one-off override, no config file:
+python3 scripts/ingest.py --extractor llm --backend cli --cmd "claude -p"
 python3 scripts/ingest.py --extractor llm --backend cli --cmd "ollama run llama3.1"
 ```
 

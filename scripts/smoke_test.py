@@ -10,6 +10,7 @@ invariants. Touches NO real repo data.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -82,6 +83,14 @@ def run(root: Path, *args: str) -> str:
     return proc.stdout
 
 
+def atom_by_title(root: Path, title: str):
+    for p in (root / "atoms").glob("ATOM-*.md"):
+        txt = p.read_text(encoding="utf-8")
+        if f"title: {title}" in txt:
+            return p, txt
+    return None, ""
+
+
 def index_fingerprint(root: Path) -> str:
     parts = []
     for p in sorted((root / "indexes").glob("*.md")):
@@ -152,6 +161,75 @@ def main() -> int:
         run(tmp)
         check("deleted index regenerated on next run",
               (tmp / "indexes" / "master_index.md").exists())
+
+        # Reconcile tests edit the ON-DISK source (which carries its assigned
+        # SRC id) — rebuilding from the template would drop the id and churn
+        # every atom's `source` field. State here: 3 atoms (alpha/beta/gamma).
+
+        # 7. Update-in-place: a metadata edit (tags) lands without re-minting.
+        print("== 7. update-in-place (metadata) ==")
+        p_alpha, t_alpha = atom_by_title(tmp, "Smoke atom alpha")
+        hash_alpha = re.search(r"hash: (\w+)", t_alpha).group(1)
+        src.write_text(src.read_text().replace(
+            "tags: [smoke, alpha]", "tags: [smoke, alpha, edited]"), encoding="utf-8")
+        out7 = run(tmp)
+        p2, t2 = atom_by_title(tmp, "Smoke atom alpha")
+        check("update-in-place keeps same atom id", bool(p2) and p2.name == p_alpha.name)
+        check("update-in-place keeps same hash", f"hash: {hash_alpha}" in t2)
+        check("update-in-place applies new tag", "edited" in t2)
+        check("update-in-place mints no new atom",
+              len(list((tmp / "atoms").glob("ATOM-*.md"))) == 3)
+        check("update-in-place reports updated=1", "updated=1" in out7)
+
+        # 8. Content edit: new hash mints a new atom, old orphan is pruned.
+        print("== 8. content edit re-mints + prunes orphan ==")
+        src.write_text(src.read_text().replace(
+            "First smoke atom body.", "First smoke atom body, revised."), encoding="utf-8")
+        out8 = run(tmp)
+        atoms8 = list((tmp / "atoms").glob("ATOM-*.md"))
+        check("content edit keeps total at 3 (re-mint + prune)", len(atoms8) == 3, f"got {len(atoms8)}")
+        check("old alpha atom pruned", not (tmp / "atoms" / p_alpha.name).exists())
+        check("exactly one alpha atom remains",
+              sum("Smoke atom alpha" in p.read_text() for p in atoms8) == 1)
+        check("prune reported (pruned=1)", "pruned=1" in out8)
+
+        # 9. Removing a block prunes its atom and scrubs the source back-ref.
+        print("== 9. block removal prunes + scrubs back-ref ==")
+        p_gamma, t_gamma = atom_by_title(tmp, "Smoke atom gamma")
+        id_gamma = re.search(r"id: (ATOM-\S+)", t_gamma).group(1)
+        src.write_text(src.read_text().replace(EXTRA_ATOM.strip(), ""), encoding="utf-8")
+        run(tmp)
+        atoms9 = list((tmp / "atoms").glob("ATOM-*.md"))
+        check("removing a block prunes its atom (3->2)", len(atoms9) == 2, f"got {len(atoms9)}")
+        check("gamma atom gone",
+              not any("Smoke atom gamma" in p.read_text() for p in atoms9))
+        check("source back-ref scrubbed of pruned atom", id_gamma not in src.read_text())
+
+        # 10. --no-prune retains orphans; --dry-run prune writes nothing.
+        print("== 10. --no-prune + dry-run prune ==")
+        src.write_text(src.read_text().replace(
+            "First smoke atom body, revised.", "First smoke atom body, revised twice."),
+            encoding="utf-8")
+        before10 = len(list((tmp / "atoms").glob("ATOM-*.md")))  # 2
+        run(tmp, "--no-prune")
+        after10 = len(list((tmp / "atoms").glob("ATOM-*.md")))
+        check("--no-prune retains orphan (re-mint grows 2->3)",
+              after10 == before10 + 1, f"{before10}->{after10}")
+        out_dry = run(tmp, "--dry-run")
+        check("dry-run prune writes nothing",
+              len(list((tmp / "atoms").glob("ATOM-*.md"))) == after10)
+        check("dry-run reports would-prune (pruned=1)", "pruned=1" in out_dry)
+        run(tmp)  # default prune cleans the orphan left by --no-prune
+        check("default prune cleans orphan after --no-prune",
+              len(list((tmp / "atoms").glob("ATOM-*.md"))) == 2)
+
+        # 11. Empty-scan guard: no sources must never wipe the atom store.
+        print("== 11. empty-scan guard ==")
+        src.unlink()
+        out11 = run(tmp)
+        check("empty scan keeps atoms intact",
+              len(list((tmp / "atoms").glob("ATOM-*.md"))) == 2)
+        check("empty scan logs guard", "prune=skipped(no-sources)" in out11)
 
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

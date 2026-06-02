@@ -94,6 +94,9 @@ def main() -> int:
         check("no error on add", not r.get("error"), r.get("error", ""))
         check("2 new atoms reported", r.get("new_count") == 2, f"got {r.get('new_count')}")
         check("1 source written", len(r.get("sources", [])) == 1)
+        check("source_atom_count reflects 2 atoms", r.get("source_atom_count") == 2,
+              f"got {r.get('source_atom_count')}")
+        check("extractor reported", r.get("extractor") == "marker", str(r.get("extractor")))
         atom_ids = [a["id"] for a in r["new_atoms"]]
 
         # 2. idempotent re-add → 0 new (success framing, not error).
@@ -159,6 +162,46 @@ def main() -> int:
         after = len(list((tmp / "atoms").glob("*.md")))
         check("preview returns candidate atoms", len(prev) == 2, f"got {len(prev)}")
         check("preview writes no atoms", before == after)
+
+        # 9. delete_atom: removes file, scrubs links, strips source block.
+        print("== 9. delete atom ==")
+        src_id = webapi.list_sources()[0]["id"]  # live id (re-add may reassign)
+        d = quiet(webapi.delete_atom, atom_ids[0])
+        check("delete_atom ok", d.get("ok") and d.get("deleted_atoms") == 1, str(d))
+        check("atom file removed", not (ingest.ATOMS / f"{atom_ids[0]}.md").exists())
+        check("atom gone from stats", webapi.stats()["counts"]["atoms"] == 1)
+        check("thesis support scrubbed", len(webapi.get_thesis(th["id"])["supporting"]) == 0)
+        src_fm = ingest.parse_frontmatter(
+            next(ingest.SOURCES.glob("*.md")).read_text(encoding="utf-8"))[0]
+        check("source back-ref scrubbed",
+              atom_ids[0] not in ingest._as_list(src_fm.get("atoms")))
+        # durability: re-ingest must NOT resurrect the deleted atom (block stripped).
+        quiet(webapi.rebuild)
+        check("delete survives re-ingest", webapi.stats()["counts"]["atoms"] == 1,
+              str(webapi.stats()["counts"]))
+
+        # 10. delete_source: removes source + its remaining atoms.
+        print("== 10. delete source ==")
+        ds = quiet(webapi.delete_source, src_id)
+        check("delete_source ok", ds.get("ok"), str(ds))
+        check("source file removed", not next(ingest.SOURCES.glob("*.md"), None))
+        check("all atoms removed", webapi.stats()["counts"]["atoms"] == 0,
+              str(webapi.stats()["counts"]))
+        check("delete_source missing id errors",
+              bool(quiet(webapi.delete_source, "SRC-nope").get("error")))
+
+        # 11. markerless source (marker mode) → written, zero atoms extracted.
+        # Distinguishes "nothing extracted" from "already captured" for the UI.
+        print("== 11. markerless source extracts nothing ==")
+        bare = tmp / "bare.md"
+        bare.write_text(
+            "---\ntitle: Bare Source\norigin: bare\n---\n\nProse with no atom blocks.\n",
+            encoding="utf-8")
+        rb = quiet(webapi.add_source, str(bare))
+        check("bare source written", len(rb.get("sources", [])) == 1, str(rb))
+        check("bare source 0 new atoms", rb.get("new_count") == 0, f"got {rb.get('new_count')}")
+        check("bare source_atom_count 0 (→ 'nothing extracted' banner)",
+              rb.get("source_atom_count") == 0, f"got {rb.get('source_atom_count')}")
 
     finally:
         import shutil

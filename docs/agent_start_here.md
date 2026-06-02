@@ -53,10 +53,20 @@ Stop at the earliest step that answers the question.
 - Atom types: `fact | insight | decision | procedure`.
 - Thesis status: `active | confirmed | challenged | archived`.
 
+## Extractor (current default)
+
+Default ingest extractor = **`llm` via the `claude -p` CLI** (set in the local,
+gitignored `config/extractor.json`). The model is fed each source body and emits
+`::atom` blocks in the format below — so sources **need no hand-written markers**
+to produce atoms. LLM output is cached by source hash, preserving idempotency.
+To force deterministic, marker-only parsing, set `"extractor": "marker"` (or
+delete `config/extractor.json`).
+
 ## Authoring atoms (the `::atom` format)
 
-Atoms are not written by hand into `atoms/`. They are embedded inside a source
-file and extracted by ingest:
+Atoms are not written by hand into `atoms/`. The configured extractor emits them
+(the `claude -p` model does so automatically; in marker mode you embed them by
+hand). Either way they live inside a source file and are extracted by ingest:
 
 ```
 ::atom
