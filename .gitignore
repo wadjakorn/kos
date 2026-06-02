@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
 .DS_Store
+.vscode/
+
+# Local extractor config (may hold endpoints/model choices) + LLM extraction cache
+config/extractor.json
+.cache/
 
 # Ingest run logs are local artifacts; keep the dir, not the runs.
 logs/*.log

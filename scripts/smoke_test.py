@@ -9,6 +9,7 @@ invariants. Touches NO real repo data.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -152,6 +153,81 @@ def main() -> int:
         check("deleted index regenerated on next run",
               (tmp / "indexes" / "master_index.md").exists())
 
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    llm_smoke()
+
+    passed = sum(1 for _, ok, _ in results if ok)
+    total = len(results)
+    print(f"\n{passed}/{total} checks passed")
+    return 0 if passed == total else 1
+
+
+# Stub "model": ignores stdin, prints a fixed ::atom block. Stands in for a
+# real LLM/CLI backend so the llm extractor path is exercised offline.
+STUB_MODEL = '''\
+import sys
+sys.stdin.read()
+print("""preamble the model rambles
+::atom
+type: insight
+title: LLM-extracted atom
+tags: [llm, smoke]
+source_location: "auto"
+confidence: 0.8
+---
+Body the model produced.
+::end
+trailing chatter""")
+'''
+
+LLM_SOURCE = """\
+---
+title: LLM Source
+origin: smoke-test
+ingested: 2026-01-01
+reliability: 0.9
+summary: Source with no hand-authored atoms; the llm extractor mints them.
+tags: [smoke]
+---
+
+Free-form prose with no ::atom markers. The configured model invents the atoms.
+"""
+
+
+def llm_smoke() -> None:
+    """End-to-end llm extractor via a stub CLI backend: config-file load,
+    extraction, and cross-process cache idempotency."""
+    tmp = Path(tempfile.mkdtemp(prefix="kos-smoke-llm-"))
+    try:
+        for d in ("sources", "atoms", "theses", "projects", "indexes", "logs",
+                  "scripts", "config"):
+            (tmp / d).mkdir(parents=True)
+        shutil.copy(REAL_INGEST, tmp / "scripts" / "ingest.py")
+        (tmp / "scripts" / "stub_model.py").write_text(STUB_MODEL, encoding="utf-8")
+        (tmp / "sources" / "llm.md").write_text(LLM_SOURCE, encoding="utf-8")
+        (tmp / "config" / "extractor.json").write_text(json.dumps({
+            "extractor": "llm",
+            "backend": "cli",
+            "cli": {"cmd": [sys.executable, str(tmp / "scripts" / "stub_model.py")]},
+        }), encoding="utf-8")
+
+        print("== 7. llm extractor (stub backend) ==")
+        out = run(tmp)
+        check("llm config selected", "extractor=llm" in out)
+        atoms = list((tmp / "atoms").glob("ATOM-*.md"))
+        check("llm extractor minted 1 atom", len(atoms) == 1, f"got {len(atoms)}")
+        if atoms:
+            check("atom carries model-supplied content",
+                  "LLM-extracted atom" in atoms[0].read_text(encoding="utf-8"))
+        check("extraction cached", bool(list((tmp / ".cache" / "extract").glob("*.json"))))
+
+        # Re-run: cache hit + hash dedupe → no new atoms (idempotent).
+        out2 = run(tmp)
+        atoms2 = list((tmp / "atoms").glob("ATOM-*.md"))
+        check("llm re-run creates 0 new atoms", len(atoms2) == 1, f"got {len(atoms2)}")
+        check("llm re-run reports skipped=1", "skipped=1" in out2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

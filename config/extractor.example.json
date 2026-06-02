@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to config/extractor.json to enable. Default (no file) = marker.",
+  "_marker": "Human-authored ::atom blocks only. Deterministic, zero deps.",
+
+  "extractor": "marker",
+
+  "_llm_cli": "Switch extractor to 'llm' + backend 'cli' to shell out to any model CLI.",
+  "backend": "cli",
+  "cli": {
+    "cmd": ["ollama", "run", "llama3.1"],
+    "timeout": 300
+  },
+
+  "_llm_http": "Or backend 'http-local' to POST a local model server (ollama/LM Studio/llama.cpp).",
+  "http": {
+    "url": "http://localhost:11434/api/generate",
+    "model": "llama3.1",
+    "response_key": "response",
+    "auth_env": null,
+    "auth_header": "Authorization",
+    "headers": {},
+    "timeout": 300
+  }
+}

@@ -2,7 +2,8 @@
 
 # Master Index
 
-## Sources (1)
+## Sources (2)
+- [[SRC-20260602-5b5156d9]] [capz — Free screen capture for macOS & Windows](sources/capz-free-screen-capture-for-macos-windows.md)
 - [[SRC-20260602-4db8b345]] [KOS Design Notes](sources/source_kos_design.md)
 
 ## Atoms (4)
