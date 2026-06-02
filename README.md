@@ -20,6 +20,9 @@ projects/                  # goal-oriented workspaces
 indexes/                   # GENERATED — never hand-edit
 scripts/ingest.py          # the ingest + index-rebuild pipeline
 scripts/kos.py             # source intake — `kos add <url|file>`
+scripts/serve.py           # web UI server (stdlib http.server)
+scripts/webapi.py          # web UI logic layer (reuses ingest.py + kos.py)
+web/                       # vanilla HTML/JS/CSS front end
 config/                    # extractor.example.json (copy to extractor.json to enable LLM)
 logs/                      # ingest run logs
 examples/                  # pointers to the worked example
@@ -106,6 +109,38 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 `kos.py` resolves its real path through the symlink, so `sources/` always land in
 this repo no matter where you invoke `kos`. (Alternative: `alias kos="python3
 /abs/path/to/scripts/kos.py"`.)
+
+## Web UI
+
+A browser front end over the same engine — zero third-party deps (stdlib
+`http.server` + vanilla JS), so it runs anywhere the CLI does.
+
+```bash
+python3 scripts/serve.py            # → http://127.0.0.1:8000/
+python3 scripts/serve.py --port 9000 --host 0.0.0.0   # expose on the LAN
+```
+
+What it does:
+
+- **Dashboard** — counts, atom-type breakdown, recent atoms/sources; empty-state
+  onboarding on a fresh install.
+- **Add source** — the `kos add` flow with a friendly face: paste a URL/feed/YouTube
+  link or upload a file, set tags/title/reliability, watch async progress, then see the
+  sources written and atoms minted. Feeds expand to many sources; a re-add of unchanged
+  content is shown as *"already captured"* (idempotency), not an error. Bypassing TLS
+  verification is a guarded, explicit confirmation — never default-on.
+- **Browse & search** — index-first lenses (all atoms, by tag, by source) with
+  composable filters (tag + type + source + text), mirroring `indexes/`. Read-only —
+  indexes are derived, never editable.
+- **Atom / source detail** — every atom always shows its provenance (source +
+  `source_location`) and reverse-linked theses/projects.
+- **Curate** — create/edit theses (attach supporting/contradicting atoms) and projects
+  (link atoms/theses, track open questions, decisions, deliverables). Curation edits
+  entity frontmatter and re-runs ingest to rebuild indexes — the engine invariants hold.
+
+The logic lives in `scripts/webapi.py` (pure functions reusing `ingest.py`/`kos.py`);
+`scripts/serve.py` is the HTTP glue. Smoke-test it with
+`python3 scripts/web_smoke_test.py`.
 
 ## LLM extraction (optional)
 

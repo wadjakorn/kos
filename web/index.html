@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KOS — Knowledge Operating System</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">◇ KOS</a>
+    <nav class="nav">
+      <a href="#/">Dashboard</a>
+      <a href="#/browse">Browse</a>
+      <a href="#/theses">Theses</a>
+      <a href="#/projects">Projects</a>
+      <a href="#/tags">Tags</a>
+    </nav>
+    <form class="searchbar" id="searchForm">
+      <input id="searchInput" type="search" placeholder="Search atoms, titles…" autocomplete="off">
+    </form>
+    <a class="btn btn-primary add-cta" href="#/add">+ Add source</a>
+  </header>
+
+  <main id="app" class="container"><div class="loading">Loading…</div></main>
+
+  <div id="modal-root"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
