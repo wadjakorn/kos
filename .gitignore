@@ -11,18 +11,7 @@ config/extractor.json
 # .example variant only. See config/paths.example.json.
 config/paths.json
 
-# Ingest run logs are local artifacts; keep the dir, not the runs.
-logs/*.log
-
-# Knowledge data ("the db") — local-only, not version-controlled.
-# Keep the directory skeleton (.gitkeep), ignore everything else.
-atoms/*
-!atoms/.gitkeep
-sources/*
-!sources/.gitkeep
-theses/*
-!theses/.gitkeep
-projects/*
-!projects/.gitkeep
-indexes/*
-!indexes/.gitkeep
+# Knowledge data ("the db") lives in a SEPARATE repo — the sibling ../db dir
+# (knowledge-base/{kos,db}), with its own git history. It is not part of this
+# repo at all, so there are no data-dir ignore rules here. The db repo carries
+# its own .gitignore (.cache/, logs/*.log).

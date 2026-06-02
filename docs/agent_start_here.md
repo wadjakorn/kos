@@ -41,9 +41,10 @@ Stop at the earliest step that answers the question.
 
 ## Where the db lives (data root)
 
-The paths above (`indexes/`, `atoms/`, `sources/`, …) are **relative to the
-configured data root**, not necessarily this code repo. The engine resolves the
-root in order: `KOS_DATA_ROOT` env var → `config/paths.json` → repo root
+The paths above (`indexes/`, `atoms/`, `sources/`, …) live in the **data repo**,
+not this code repo. Standard layout is two sibling repos: `knowledge-base/kos/`
+(code, this repo) and `knowledge-base/db/` (data). The engine resolves the data
+root in order: `KOS_DATA_ROOT` env var → `config/paths.json` → sibling `../db`
 (default). The root is the single entry point — it doubles as the Obsidian vault
 (links `[[ID]]` resolve to `{ID}.md` files under it). To find the active root:
 `python3 -c "import sys; sys.path.insert(0,'scripts'); import ingest; print(ingest.ROOT)"`.

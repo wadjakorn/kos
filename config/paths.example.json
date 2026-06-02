@@ -1,6 +1,6 @@
 {
-  "_comment": "Copy to config/paths.json to point the engine at an external data root ('the db'). Resolution order: KOS_DATA_ROOT env var > config/paths.json > repo root (default).",
-  "_note": "data_root is the single entry point: KOS data dir, its own git repo, and the Obsidian vault root. Leading ~ is expanded.",
+  "_comment": "Copy to config/paths.json ONLY to override the default data root. Resolution order: KOS_DATA_ROOT env var > config/paths.json > sibling ../db (default, the knowledge-base/{kos,db} layout — no config needed).",
+  "_note": "data_root is the single entry point: KOS data dir, its own git repo, and the Obsidian vault root. Leading ~ is expanded; relative paths resolve against the current working directory, so prefer an absolute path.",
 
-  "data_root": "~/knowledge-base-data"
+  "data_root": "/Volumes/nas/knowledge-base/db"
 }

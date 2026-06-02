@@ -10,65 +10,74 @@ smallest reusable knowledge units (**atoms**), linked into **theses** and
 
 ## Layout
 
-```
-docs/agent_start_here.md   # mandatory agent entry point
-templates/                 # atom / thesis / project / source schemas
-sources/                   # ingested documents (atoms embedded as ::atom blocks)
-atoms/                     # generated atom files (one idea each)
-theses/                    # claims under evaluation
-projects/                  # goal-oriented workspaces
-indexes/                   # GENERATED — never hand-edit
-scripts/ingest.py          # the ingest + index-rebuild pipeline
-scripts/kos.py             # source intake — `kos add <url|file>`
-scripts/serve.py           # web UI server (stdlib http.server)
-scripts/webapi.py          # web UI logic layer (reuses ingest.py + kos.py)
-web/                       # vanilla HTML/JS/CSS front end
-config/                    # extractor + paths config (copy *.example.json to enable)
-logs/                      # ingest run logs
-examples/                  # pointers to the worked example
-```
+Code and knowledge live in **two sibling repos** under one parent — they
+version independently:
 
-The **data directories** (`sources/ atoms/ theses/ projects/ indexes/ logs/`)
-are *the db* — by default they sit in this repo, but they can live in their own
-directory outside it (see **Data root** below).
+```
+knowledge-base/
+├── kos/                    # CODE repo (this repo) — its own git history
+│   ├── docs/agent_start_here.md   # mandatory agent entry point
+│   ├── templates/          # atom / thesis / project / source schemas
+│   ├── scripts/ingest.py   # the ingest + index-rebuild pipeline
+│   ├── scripts/kos.py      # source intake — `kos add <url|file>`
+│   ├── scripts/serve.py    # web UI server (stdlib http.server)
+│   ├── scripts/webapi.py   # web UI logic layer (reuses ingest.py + kos.py)
+│   ├── web/                # vanilla HTML/JS/CSS front end
+│   ├── config/             # extractor + paths config (copy *.example.json)
+│   └── examples/           # pointers to the worked example
+└── db/                     # DATA repo ("the db") — its own git history + Obsidian vault
+    ├── sources/            # ingested documents (atoms embedded as ::atom blocks)
+    ├── atoms/              # generated atom files (one idea each)
+    ├── theses/             # claims under evaluation
+    ├── projects/           # goal-oriented workspaces
+    ├── indexes/            # GENERATED — never hand-edit
+    └── logs/               # ingest run logs
+```
 
 ## Data root — where the db lives
 
-Code (this repo) and knowledge (the db) can version independently. The engine
-resolves a single **data root**, in order:
+The engine resolves a single **data root**, in order:
 
 1. `KOS_DATA_ROOT` environment variable
 2. `config/paths.json` → `{"data_root": "..."}` (machine-local, gitignored)
-3. the repo root itself (backward-compatible default — no setup needed)
+3. the sibling **`../db`** (the standard `knowledge-base/{kos,db}` layout — no
+   setup needed)
 
 That data root is the **single entry point** for everything else: it is the KOS
-data dir, it can be its own git repo, and it is the **Obsidian vault root**.
-Because atom files are named `{ID}.md` and links use `[[ID]]`, Obsidian resolves
-cross-links by basename as long as every entity folder sits under one root —
-which this guarantees.
+data dir, its own git repo, and the **Obsidian vault root**. Because atom files
+are named `{ID}.md` and links use `[[ID]]`, Obsidian resolves cross-links by
+basename as long as every entity folder sits under one root — which this
+guarantees. `config/extractor.json` stays in the **kos** repo — it is engine
+config, not knowledge.
 
-**One-time setup — externalize the db:**
+**One-time setup — split an existing flat checkout into `kos/` + `db/`.** Run
+from the directory **above** your checkout, with no active git worktrees (the
+whole repo, `.git` included, moves down one level — tracked paths are unchanged,
+so the git history is untouched):
 
 ```bash
-# 1. pick a root and move any existing local data into it
-mkdir -p ~/knowledge-base-data
-mv sources atoms theses projects indexes logs ~/knowledge-base-data/ 2>/dev/null || true
+# current state: ./knowledge-base is the git repo (code + local data together)
 
-# 2. point the engine at it (either mechanism works)
-cp config/paths.example.json config/paths.json   # then edit data_root, OR:
-export KOS_DATA_ROOT=~/knowledge-base-data
+# 1. nest the code repo under kos/ (parent becomes a plain container dir)
+mv knowledge-base kos && mkdir knowledge-base && mv kos knowledge-base/
+cd knowledge-base
 
-# 3. give the data its own git history
-cd ~/knowledge-base-data && git init && \
+# 2. create the data repo as a sibling and move any local data into it
+mkdir db && mv kos/sources kos/atoms kos/theses kos/projects \
+                kos/indexes kos/logs db/ 2>/dev/null || true
+( cd db && git init && \
   printf '.cache/\nlogs/*.log\n' > .gitignore && \
-  git add . && git commit -m "init knowledge data"
+  git add . && git commit -m "init knowledge data" )
 
-# 4. open ~/knowledge-base-data in Obsidian as a vault (optional)
+# 3. nothing to configure — kos/ resolves ../db by default. Verify:
+cd kos && python3 -c "import sys; sys.path.insert(0,'scripts'); import ingest; print(ingest.ROOT)"
+#   → .../knowledge-base/db
+
+# 4. open db/ in Obsidian as a vault (optional).
 ```
 
-With a data root configured, the in-repo `sources/ atoms/ …` skeleton is unused
-(it only serves the default no-config mode). `config/extractor.json` stays in
-the code repo — it is engine config, not knowledge.
+Override the default by setting `KOS_DATA_ROOT` or `config/paths.json` (e.g. to
+put `db/` on a NAS or a different disk).
 
 ## The five invariants
 

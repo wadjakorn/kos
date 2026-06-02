@@ -43,7 +43,8 @@ from pathlib import Path
 # Resolution order (see init_paths / _resolve_data_root):
 #   1. KOS_DATA_ROOT env var
 #   2. config/paths.json -> {"data_root": "..."} (machine-local, gitignored)
-#   3. repo root (backward-compatible default)
+#   3. sibling ../db — the standard layout: knowledge-base/{kos,db}
+#      (code repo = kos/, data repo = db/, side by side).
 #
 # CONFIG (extractor config) is *engine* config, not knowledge — it always
 # stays in the code repo, never moving with the data.
@@ -57,7 +58,7 @@ ROOT = SOURCES = ATOMS = THESES = PROJECTS = INDEXES = LOGS = CACHE = None  # ty
 
 
 def _resolve_data_root() -> Path:
-    """Resolve the knowledge data root: env > config/paths.json > repo root."""
+    """Resolve the knowledge data root: env > config/paths.json > sibling ../db."""
     env = os.environ.get("KOS_DATA_ROOT")
     if env:
         return Path(env).expanduser().resolve()
@@ -69,7 +70,7 @@ def _resolve_data_root() -> Path:
             data_root = None
         if data_root:
             return Path(data_root).expanduser().resolve()
-    return _REPO_ROOT
+    return (_REPO_ROOT.parent / "db").resolve()  # knowledge-base/{kos,db}
 
 
 def init_paths(base: Path | None = None) -> None:
