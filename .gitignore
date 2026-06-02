@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Ingest run logs are local artifacts; keep the dir, not the runs.
+logs/*.log
