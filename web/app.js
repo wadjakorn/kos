@@ -328,7 +328,34 @@ async function viewAtom(id) {
     ${tagList(a.tags)}
     ${th ? `<h2>Linked theses</h2><ul>${th}</ul>` : ""}
     ${pr ? `<h2>Linked projects</h2><ul>${pr}</ul>` : ""}
-    <div class="meta-line" style="margin-top:18px">${esc(a.id)} · created ${esc(a.created)}</div>`);
+    <div class="meta-line" style="margin-top:18px">${esc(a.id)} · created ${esc(a.created)}</div>
+    <div class="btn-row" style="margin-top:18px">
+      <button class="btn btn-danger" id="del-atom">Delete atom</button></div>`);
+  bindDelete("del-atom", {
+    title: "Delete atom",
+    msg: "Removes this atom and every link to it. This cannot be undone.",
+    url: "/api/atoms/" + encodeURIComponent(a.id),
+    after: a.source ? "#/source/" + encodeURIComponent(a.source) : "#/browse",
+  });
+}
+
+/* Wire a danger button to a confirm modal → DELETE → navigate (or show error). */
+function bindDelete(btnId, { title, msg, url, after }) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (!(await confirmModal(title, msg, "Delete"))) return;
+    btn.disabled = true;
+    try {
+      const res = await apiSend(url, "DELETE");
+      if (res && res.error) throw new Error(res.error);
+      App.go(after);
+    } catch (e) {
+      btn.disabled = false;
+      appEl().insertAdjacentHTML("afterbegin",
+        `<div class="banner banner-error">Delete failed: ${esc(e.message)}</div>`);
+    }
+  });
 }
 
 /* ---------- Source detail (review what was extracted) ---------- */
@@ -354,7 +381,16 @@ async function viewSource(id) {
          That's valid — the source is captured, it just produced no reusable units
          (a thin page, or no <code>::atom</code> markers in marker mode).</div>`}
     <details class="advanced" style="margin-top:20px"><summary>Original source text</summary>
-      <div class="prose" style="margin-top:10px">${renderMarkdown(s.body)}</div></details>`);
+      <div class="prose" style="margin-top:10px">${renderMarkdown(s.body)}</div></details>
+    <div class="btn-row" style="margin-top:20px">
+      <button class="btn btn-danger" id="del-source">Delete source</button></div>`);
+  bindDelete("del-source", {
+    title: "Delete source",
+    msg: `Removes this source and the ${atoms.length} atom(s) extracted from it, `
+       + "plus every link to them. This cannot be undone.",
+    url: "/api/sources/" + encodeURIComponent(s.id),
+    after: "#/browse?lens=source",
+  });
 }
 
 /* ---------- Theses ---------- */
@@ -589,16 +625,25 @@ function renderAddError(msg, out) {
 function renderAddResult(r, out) {
   const sources = r.sources || [];
   const newCount = r.new_count || 0;
+  const srcAtoms = r.source_atom_count || 0;
+  const extractor = r.extractor || "marker";
   let head;
   if (r.no_ingest) {
     head = `<div class="banner banner-ok">Source scaffolded (not yet extracted).
             Run extraction later, or re-add without “scaffold only”.</div>`;
-  } else if (newCount === 0) {
+  } else if (newCount > 0) {
+    head = `<div class="banner banner-ok"><strong>Captured.</strong>
+            ${sources.length} source${sources.length===1?"":"s"} · ${newCount} new atom${newCount===1?"":"s"}.</div>`;
+  } else if (srcAtoms > 0) {
+    // Source already in the store with atoms; re-ingest minted nothing new.
     head = `<div class="banner banner-info"><strong>Already captured.</strong>
             Nothing new — this content is already in your knowledge base (idempotent by design).</div>`;
   } else {
-    head = `<div class="banner banner-ok"><strong>Captured.</strong>
-            ${sources.length} source${sources.length===1?"":"s"} · ${newCount} new atom${newCount===1?"":"s"}.</div>`;
+    // Source written, but the extractor produced zero atoms from it.
+    const hint = extractor === "marker"
+      ? `Marker mode found no <code>::atom</code> blocks in this source. Add <code>::atom</code> blocks to it, or switch to LLM extraction (<code>config/extractor.json</code> → <code>"extractor":"llm"</code>) to mint atoms from raw prose.`
+      : `The <code>${esc(extractor)}</code> extractor returned no atoms for this source. The content may be too thin, or extraction failed — check the ingest logs.`;
+    head = `<div class="banner banner-warn"><strong>Source saved — but no atoms extracted.</strong><br>${hint}</div>`;
   }
   const srcLinks = sources.map(s =>
     `<a class="card" href="#/source/${esc(s.id)}">${esc(s.title)}</a>`).join("");

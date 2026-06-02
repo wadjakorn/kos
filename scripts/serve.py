@@ -195,6 +195,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
         return self._not_found()
 
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        parts = path.strip("/").split("/")
+        try:
+            if len(parts) == 3 and parts[0] == "api":
+                kind, ident = parts[1], unquote(parts[2])
+                if kind == "atoms":
+                    return self._mutate(webapi.delete_atom(ident))
+                if kind == "sources":
+                    return self._mutate(webapi.delete_source(ident))
+        except Exception as e:  # noqa: BLE001
+            return self._json({"error": str(e)}, 500)
+        return self._not_found()
+
     def _mutate(self, result: dict):
         return self._json(result, 400 if result.get("error") else 200)
 

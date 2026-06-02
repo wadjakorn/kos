@@ -317,11 +317,21 @@ def add_source(input: str, type: str | None = None, tags: str = "",
                                    "path": ingest._rel(p)})
 
         new_ids = sorted(_atom_ids() - before)
-        atoms_by_id = _by_id(ingest.load_entities(ingest.ATOMS))
+        all_atoms = ingest.load_entities(ingest.ATOMS)
+        atoms_by_id = _by_id(all_atoms)
+        # Atoms attributed to the just-written sources. Lets the UI tell apart
+        # "already captured" (source has atoms, none new) from "nothing extracted"
+        # (source written but produced zero atoms — e.g. no ::atom markers in
+        # marker mode, or the model emitted none).
+        written_ids = {s["id"] for s in result_sources}
+        source_atom_count = sum(1 for a in all_atoms
+                                if str(a.get("source")) in written_ids)
         return {
             "sources": result_sources,
             "new_atoms": [_entity(atoms_by_id[i]) for i in new_ids if i in atoms_by_id],
             "new_count": len(new_ids),
+            "source_atom_count": source_atom_count,
+            "extractor": ingest.load_config().get("extractor", "marker"),
             "empty_skipped": empty_skipped,
             "no_ingest": no_ingest,
         }
@@ -331,6 +341,26 @@ def rebuild() -> dict:
     with _LOCK:
         _rebuild()
     return {"ok": True}
+
+
+def delete_atom(atom_id: str) -> dict:
+    """Delete one atom + scrub its back-refs, then rebuild indexes."""
+    with _LOCK:
+        if str(atom_id) not in _atom_ids():
+            return {"error": f"atom {atom_id!r} not found"}
+        removed = ingest.delete_atoms({atom_id})
+        _rebuild()
+    return {"ok": True, "deleted_atoms": removed}
+
+
+def delete_source(source_id: str) -> dict:
+    """Delete a source, the atoms it produced, and all references, then rebuild."""
+    with _LOCK:
+        result = ingest.delete_source(source_id)
+        if result.get("error"):
+            return result
+        _rebuild()
+    return {"ok": True, **result}
 
 
 def _unique_path(directory: Path, base: str) -> tuple[str, Path]:

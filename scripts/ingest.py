@@ -312,7 +312,11 @@ class LLMExtractor(Extractor):
 # ---------------------------------------------------------------------------
 # Extractor construction from config file + CLI overrides.
 # ---------------------------------------------------------------------------
-def load_config(path: Path = CONFIG) -> dict:
+def load_config(path: Path | None = None) -> dict:
+    # Read the live module-level CONFIG when no path is given — a default arg
+    # would bind CONFIG at def-time and ignore later repointing (tests, web).
+    if path is None:
+        path = CONFIG
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     return {}
@@ -377,16 +381,158 @@ def _as_list(value) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Reconcile / delete helpers (shared by --prune and the web delete API).
+# Cross-links: source `atoms`, thesis `supporting_atoms`/`contradicting_atoms`,
+# project `linked_atoms`. Provenance is bidirectional, so removing an atom must
+# scrub every back-reference too.
+# ---------------------------------------------------------------------------
+_ATOM_MUTABLE = ("type", "tags", "source", "source_location", "confidence")
+
+
+def _fm_only(entity: dict) -> dict:
+    """Frontmatter dict without the load_entities-injected _path/_body keys."""
+    return {k: v for k, v in entity.items() if not k.startswith("_")}
+
+
+def _atom_ref_fields() -> dict:
+    return {SOURCES: ["atoms"],
+            THESES: ["supporting_atoms", "contradicting_atoms"],
+            PROJECTS: ["linked_atoms"]}
+
+
+def scrub_atom_refs(atom_ids, dry_run: bool = False) -> int:
+    """Remove the given atom ids from every entity that links them. Returns the
+    number of entity files rewritten."""
+    ids = {str(a) for a in atom_ids}
+    if not ids:
+        return 0
+    touched = 0
+    for directory, fields in _atom_ref_fields().items():
+        for entity in load_entities(directory):
+            fm = _fm_only(entity)
+            changed = False
+            for field in fields:
+                if field not in fm:
+                    continue
+                current = _as_list(fm.get(field))
+                kept = [x for x in current if str(x) not in ids]
+                if len(kept) != len(current):
+                    fm[field] = kept
+                    changed = True
+            if changed:
+                touched += 1
+                if not dry_run:
+                    entity["_path"].write_text(
+                        dump_frontmatter(fm, entity.get("_body", "")), encoding="utf-8")
+    return touched
+
+
+def _strip_atom_blocks(source_path: Path, hashes: set, dry_run: bool = False) -> int:
+    """Remove ``::atom`` blocks whose content hash is in `hashes` from a source.
+    Without this, a deleted atom is re-minted on the next ingest of its source."""
+    fm, body = parse_frontmatter(source_path.read_text(encoding="utf-8"))
+    removed = 0
+
+    def repl(m):
+        nonlocal removed
+        parsed = parse_atom_blocks(m.group(0))
+        if parsed:
+            a = parsed[0]
+            h = content_hash(str(a.get("title", "")).strip(), a.get("_body", ""))
+            if h in hashes:
+                removed += 1
+                return ""
+        return m.group(0)
+
+    new_body = _ATOM_BLOCK_RE.sub(repl, body)
+    if removed and not dry_run:
+        new_body = re.sub(r"\n{3,}", "\n\n", new_body).strip() + "\n"
+        source_path.write_text(dump_frontmatter(fm, new_body), encoding="utf-8")
+    return removed
+
+
+def delete_atoms(atom_ids, dry_run: bool = False) -> int:
+    """Delete atom files, strip their originating source blocks, and scrub their
+    ids from every linking entity. Returns the number of atom files removed."""
+    ids = {str(a) for a in atom_ids}
+    if not ids:
+        return 0
+    atoms = [a for a in load_entities(ATOMS) if str(a.get("id")) in ids]
+
+    # Strip the source `::atom` blocks so re-ingest can't resurrect them.
+    by_source: dict[str, set] = {}
+    for a in atoms:
+        if a.get("hash") and a.get("source"):
+            by_source.setdefault(str(a["source"]), set()).add(a["hash"])
+    if by_source:
+        src_paths = {str(s.get("id")): s["_path"] for s in load_entities(SOURCES)}
+        for sid, hashes in by_source.items():
+            p = src_paths.get(sid)
+            if p and p.exists():
+                _strip_atom_blocks(p, hashes, dry_run=dry_run)
+
+    scrub_atom_refs(ids, dry_run=dry_run)
+    removed = 0
+    for atom in atoms:
+        removed += 1
+        if not dry_run:
+            atom["_path"].unlink()
+    return removed
+
+
+def delete_source(source_id, dry_run: bool = False) -> dict:
+    """Delete a source, its extracted atoms, and every reference to them."""
+    sid = str(source_id)
+    src = next((s for s in load_entities(SOURCES) if str(s.get("id")) == sid), None)
+    if src is None:
+        return {"error": f"source {sid!r} not found"}
+    atom_ids = {str(a.get("id")) for a in load_entities(ATOMS)
+                if str(a.get("source")) == sid}
+    # Unlink the source first so delete_atoms skips block-stripping a doomed file.
+    if not dry_run:
+        src["_path"].unlink()
+    deleted_atoms = delete_atoms(atom_ids, dry_run=dry_run)
+    return {"deleted_source": sid, "deleted_atoms": deleted_atoms}
+
+
+def _update_atom_in_place(existing: dict, meta: dict, source_id: str,
+                          dry_run: bool) -> bool:
+    """Refresh an existing atom's mutable metadata from its source block. Content
+    (title/body) and identity (id/created/hash/links) are preserved — only the
+    fields in _ATOM_MUTABLE are reconciled. Returns True if anything changed."""
+    desired = {
+        "type": meta.get("type", "fact"),
+        "tags": _as_list(meta.get("tags")),
+        "source": source_id,
+        "source_location": meta.get("source_location", ""),
+        "confidence": meta.get("confidence", ""),
+    }
+    fm = _fm_only(existing)
+    changed = any(fm.get(k) != v for k, v in desired.items())
+    if changed:
+        fm.update(desired)
+        if not dry_run:
+            existing["_path"].write_text(
+                dump_frontmatter(fm, existing.get("_body", "")), encoding="utf-8")
+    return changed
+
+
+# ---------------------------------------------------------------------------
 # Ingest: sources -> atom files.
 # ---------------------------------------------------------------------------
-def ingest_sources(extractor: Extractor, dry_run: bool, verbose: bool, log: list):
-    existing_hashes = set()
+def ingest_sources(extractor: Extractor, dry_run: bool, verbose: bool, log: list,
+                   prune: bool = True):
+    existing_by_hash: dict[str, dict] = {}
     for atom in load_entities(ATOMS):
         if "hash" in atom:
-            existing_hashes.add(atom["hash"])
+            existing_by_hash[atom["hash"]] = atom
+    existing_hashes = set(existing_by_hash)
+    live_hashes: set[str] = set()       # hashes produced by the current scan
+    scanned_ids: set[str] = set()       # source ids seen this run
+    live_by_source: dict[str, int] = {}  # live atoms produced per source
 
     today = date.today().strftime("%Y%m%d")
-    scanned = new = skipped = 0
+    scanned = new = updated = skipped = pruned = 0
 
     for src_path in sorted(SOURCES.glob("*.md")):
         scanned += 1
@@ -400,6 +546,7 @@ def ingest_sources(extractor: Extractor, dry_run: bool, verbose: bool, log: list
             fm["id"] = f"SRC-{today}-{sid}"
             src_changed = True
         source_id = fm["id"]
+        scanned_ids.add(source_id)
 
         atoms = extractor.extract(body)
         back_refs = _as_list(fm.get("atoms"))
@@ -408,9 +555,25 @@ def ingest_sources(extractor: Extractor, dry_run: bool, verbose: bool, log: list
             title = str(meta.get("title", "")).strip()
             atom_body = meta.get("_body", "")
             h = content_hash(title, atom_body)
+            live_hashes.add(h)
+            live_by_source[source_id] = live_by_source.get(source_id, 0) + 1
+
             if h in existing_hashes:
-                skipped += 1
+                # Known content: reconcile mutable metadata in place (no re-mint).
+                existing = existing_by_hash.get(h)
+                if existing is not None:
+                    did = _update_atom_in_place(existing, meta, source_id, dry_run)
+                    updated += 1 if did else 0
+                    skipped += 0 if did else 1
+                    aid = str(existing.get("id", ""))
+                    if verbose and did:
+                        print(f"  [update] {aid}  {title!r}")
+                    if aid and aid not in back_refs:
+                        back_refs.append(aid)
+                else:
+                    skipped += 1
                 continue
+
             existing_hashes.add(h)
             atom_id = f"ATOM-{today}-{h[:8]}"
 
@@ -446,10 +609,48 @@ def ingest_sources(extractor: Extractor, dry_run: bool, verbose: bool, log: list
                 fm["atoms"] = sorted(set(back_refs))
                 src_path.write_text(dump_frontmatter(fm, body), encoding="utf-8")
 
-    log.append(f"scanned={scanned} new_atoms={new} skipped={skipped}")
+    # Prune orphans — atoms whose content no longer appears in their source.
+    # Two guards keep prune from wiping atoms it shouldn't:
+    #   * empty scan (no sources / all failed) → skip entirely.
+    #   * an orphan is pruned ONLY if its source produced >=1 live atom this run.
+    #     A source that drops to zero (e.g. ingested with a different extractor
+    #     than minted the atoms, like marker-vs-llm) is ambiguous — retain and
+    #     warn rather than silently delete. Use the web/CLI delete to remove
+    #     such atoms deliberately.
+    retained = 0
+    if prune and scanned == 0:
+        log.append("prune=skipped(no-sources)")
+        if verbose:
+            print("  [prune] skipped — no sources scanned (refusing to wipe atoms)")
+    elif prune:
+        orphans, skipped_srcs = [], set()
+        for a in load_entities(ATOMS):
+            if a.get("hash") in live_hashes:
+                continue
+            sid = str(a.get("source"))
+            if sid in scanned_ids and live_by_source.get(sid, 0) > 0:
+                orphans.append(str(a.get("id")))
+            else:
+                retained += 1
+                skipped_srcs.add(sid)
+        if verbose:
+            for oid in orphans:
+                print(f"  [{'would prune' if dry_run else 'prune'}] {oid}")
+        pruned = len(orphans)
+        if not dry_run:
+            delete_atoms(orphans)
+        if retained:
+            log.append(f"prune_retained={retained} (sources with 0 live atoms: "
+                       f"{sorted(s for s in skipped_srcs if s)})")
+            print(f"  [prune] retained {retained} orphan(s) whose source produced "
+                  f"0 atoms this run — delete deliberately if intended")
+
+    log.append(f"scanned={scanned} new_atoms={new} updated={updated} "
+               f"skipped={skipped} pruned={pruned} retained_orphans={retained}")
     if verbose:
-        print(f"\nsources scanned={scanned}  new atoms={new}  skipped(dupe)={skipped}")
-    return scanned, new, skipped
+        print(f"\nsources scanned={scanned}  new atoms={new}  updated={updated}  "
+              f"skipped(dupe)={skipped}  pruned={pruned}")
+    return scanned, new, updated, skipped, pruned
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +744,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="KOS ingest pipeline")
     ap.add_argument("--dry-run", action="store_true", help="report without writing")
     ap.add_argument("--verbose", action="store_true", help="per-entity output")
+    ap.add_argument("--no-prune", action="store_true",
+                    help="keep atoms whose content no longer appears in any source "
+                         "(default: prune orphans so indexes mirror the sources)")
     ap.add_argument("--extractor", choices=["marker", "llm"],
                     help="override config: marker (default) or llm")
     ap.add_argument("--backend", choices=["cli", "http-local"],
@@ -575,7 +779,7 @@ def main(argv=None) -> int:
     log.append(f"extractor={cfg.get('extractor', 'marker')}")
     if args.verbose:
         print(f"== ingest sources (extractor={cfg.get('extractor', 'marker')}) ==")
-    ingest_sources(extractor, args.dry_run, args.verbose, log)
+    ingest_sources(extractor, args.dry_run, args.verbose, log, prune=not args.no_prune)
 
     if args.verbose:
         print("== rebuild indexes ==")
